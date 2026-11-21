@@ -1,3 +1,49 @@
+# Offline Docker end-to-end validation
+
+With Docker, uv, Harbor 0.20.0 (with websockets), and the real PLE checkout at
+`~/repos/ple` installed, run:
+
+```bash
+cd ~/repos/ple
+uv run python -m kit validate ~/repos/ple-agent-harness
+uv run python -m kit build ~/repos/ple-agent-harness
+cd ~/repos/ple-agent-harness
+scripts/run_offline_e2e.sh "$HOME/ple-offline-runs/example"
+```
+
+The output directory must not already exist. Override `PLE_ROOT` for another kit
+checkout. Initial provisioning/builds need network access for images and packages;
+the episode uses no paid model, credentials, Hugging Face dataset or external
+model service. The task runs with Harbor's `no-network` policy and only Python
+stdlib. This is not an air-gapped cold-install test.
+
+`scripts/mock_model.py` is a stdlib OpenAI-compatible server, bound to `0.0.0.0:8090`
+for Docker reachability (use only on a trusted development host). It supports the
+kit's nonstreamed connectivity probe and streamed tool calls. Replies are scripted
+by phase prompt: JSON plan, bash calculation using uploaded engtools, write_file,
+host-side write_docx, independent read/recomputation, pass verdict and final answer.
+It tests transport/tooling, not model reasoning or reviewer quality.
+
+The runner copies the entry outside the repository and changes only the copy to
+`openai-compatible/fake` with a public HTTPS placeholder URL. The competition YAML
+remains unchanged. It runs real `kit check --no-smoke --model-base-url
+http://localhost:8090/v1`, then the kit's `ServeAgent` directly in Harbor against
+the original local task in `examples/synthetic_task/`. `eval/run.py --tasks-dir`
+still restricts selection to IDs in the official dev manifest, so it cannot select
+this synthetic task. No fake evaluator or copied PLE task content is needed.
+
+The kit rewrites localhost to `host.docker.internal` and grants the exact model
+endpoint as an egress-proxy exception, including on Docker 28+. Harbor uses that
+same runtime configuration for its real serve stack and protocol relay. The kit
+check deliberately omits its unrelated smoke/MCP tasks; those are not validated
+by this deterministic electrical-task model. Local-only model and missing official
+dev artifacts notices are expected, not competition readiness claims.
+
+Logs, Harbor results, collected deliverables and phase trace remain in the output
+directory; the runner asserts reward 1.0, no trial exception, collected outputs,
+and the stdlib DOCX/JSON content checks. `tests/test_offline.py` separately covers
+mock responses, streaming/probe HTTP, and missing/incorrect synthetic outputs.
+
 # PLE Agent Harness
 
 Apache-2.0 competition harness derived from Google Research's PLE custom-openai

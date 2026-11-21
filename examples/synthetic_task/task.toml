@@ -1,0 +1,18 @@
+version = "1.0"
+
+[agent]
+timeout_sec = 1800
+
+[verifier]
+timeout_sec = 60
+
+[environment]
+network_mode = "no-network"
+cpus = 1
+memory_mb = 512
+
+[[artifacts]]
+source = "/output"
+
+[[artifacts]]
+source = "/tmp/ple_work/trace.json"
