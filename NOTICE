@@ -1,0 +1,6 @@
+PLE Agent Harness
+
+serve.py and ple_harness/{__init__,common,llm,mcp,tools}.py derive from
+sample_submissions/custom-openai/serve.py in google-research/ple.
+taskbridge.py is copied verbatim from sample_submissions/taskbridge.py.
+Upstream copyright 2026 Google LLC. Upstream and new code: Apache-2.0.
