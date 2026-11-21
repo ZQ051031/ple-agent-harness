@@ -100,7 +100,7 @@ and fall back to defaults. In kit runs, put nonsecret overrides in
 ### Layout and reuse
 
 ```text
-submission.yaml, serve.py, taskbridge.py  Entry and protocol server
+submission.yaml, serve.py, harness.py, taskbridge.py  Entry, solver and protocol server
 ple_harness/
   llm.py, common.py                     Reusable model loop and message helpers
   orchestrator.py, config.py            Phases and budgets
@@ -185,6 +185,39 @@ Unrelated smoke/MCP checks are skipped. It asserts reward 1.0, no exception,
 collected DOCX/JSON, phase completion and final message. Logs remain in the output
 directory. This tests integration, **not reasoning or competition readiness**.
 
+### Free local CPU model
+
+```bash
+cd ~/repos/ple-agent-harness
+scripts/start_local_model.sh
+scripts/run_local_model.sh check --output "$HOME/ple-offline-runs/qwen-check-example"
+# Requires access to the gated dev dataset, even though inference is free:
+scripts/run_local_model.sh eval --output "$HOME/ple-offline-runs/qwen-eval-example"
+```
+
+The starter downloads the public Qwen/Qwen3-8B-GGUF Q4_K_M model without a token,
+verifies its SHA-256, and uses a digest-pinned llama.cpp Docker image. It runs
+Qwen3-8B with a 32768-token context, Jinja tool templates, eight CPU threads,
+one slot and alias `qwen3-8b`. It leaves an existing running `llama` container
+alone. Allow model loading to finish (`curl http://localhost:8091/health`).
+The unauthenticated server binds `0.0.0.0:8091` so Docker can reach it: use a
+trusted host/network, not a public-facing machine. CPU generation is slow.
+
+The wrapper creates a new copy outside the checkout, excluding secrets and
+artifacts, and declares `openai-compatible/qwen3-8b` **only in that copy**.
+The main `submission.yaml` remains unchanged. The kit runs from `~/repos/ple`
+(`PLE_ROOT` overrides this), with `--model-base-url http://localhost:8091/v1`
+and a dummy key. `check` includes `--cancel-test`; `eval` defaults to one trial
+at a time and uses the same local server for judging unless `JUDGE_BASE_URL`
+and `JUDGE_API_KEY` configure another judge (`JUDGE_MODEL` selects its model).
+Extra kit/eval flags are forwarded; `--base-url` selects another local endpoint.
+The CPU profile defaults to `REASONING_EFFORT=none` to avoid spending short task
+budgets on hidden reasoning before any tool runs. Use `--reasoning-effort high`
+to enable it; this affects only the local copy, not the competition entry.
+Logs and any eval-generated artifacts stay under the printed copy/run paths.
+These local-only entries are not submissions; review and regenerate genuine
+dev artifacts with the intended competition model before submitting anything.
+
 ### Real model, kit checks and dev evaluation
 
 After obtaining your own project/model and gated dataset access:
@@ -256,14 +289,35 @@ Never hand-edit exported artifacts/manifests. Limits include 95 MiB per delivera
 | --- | --- |
 | Synthetic Docker/Harbor episode | 1 trial, 0 exceptions, reward 1.0 |
 | Synthetic current | 133.646 A; DOCX and JSON content checks passed |
-| Unit suite | 43 passed in 1.99 s |
+| Unit suite | 62 passed in 1.83 s |
 | Ruff | All checks passed |
+| Official kit, local Qwen3-8B Q4_K_M on CPU, reasoning `none` | Smoke 19 s; MCP 35 s; cancel passed |
+| Local reasoning ablation: `high` | Smoke 287 s; MCP did not write its file within budget |
+| Local reasoning ablation: `none` | Smoke, MCP and cancel passed; not a dev-set score |
+| Organizers' submission-template baseline: Pi + Claude Opus 5.5 | Mean dev reward **0.491** across 29 manifest tasks; **not our score** |
 
-**Dev-set results: pending — requires HF token + model access**
+| Official kit stage (local Qwen, reasoning `none`) | Result |
+| --- | --- |
+| submission.yaml | PASS |
+| files | WARN: disposable entry copy is not a Git repository |
+| build | PASS: 121 MiB bundle, 27 s |
+| model | PASS: 12.4 s through egress proxy |
+| listen | PASS: 2 s |
+| smoke | PASS: 19 s |
+| MCP | PASS: 35 s |
+| cancel | PASS: done within 10 s of cancellation |
+| artifacts | WARN: genuine dev artifacts not generated |
+
+**Our own dev-set score is unmeasured because the Hugging Face dataset is gated.**
+Local self-hosted inference is available, but this check is not a dev evaluation
+or a submission-readiness claim. The required root `harness.py` now exports the
+solver used by `serve.py`; keep it alongside `submission.yaml` and `serve.py`.
 
 See [recorded results](results/README.md) and [writeup draft](WRITEUP.md). The mock
-has fixture-specific scripts; production `solve()` does not call it. There are no
-measured official dev/test scores or model costs. DOCX content and structure were
+has fixture-specific scripts; production `solve()` does not call it. Our official
+dev/test scores and model costs remain unmeasured. The reference mean is computed
+from the organizers' committed `artifacts/manifest.json`, not from our harness.
+DOCX content and structure were
 checked, but visual rendering remains unverified.
 
 ## How to submit

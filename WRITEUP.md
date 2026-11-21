@@ -1,7 +1,7 @@
 # PLE Agent Harness: engineering deliverables under a deadline
 
-*Kaggle writeup draft. Dev-set results: pending — requires HF token + model
-access. Replace score placeholders only after a reproducible official run.*
+*Kaggle writeup draft. Our own dev-set score is unmeasured because the Hugging
+Face dataset is gated. Local CPU-model integration checks are recorded below.*
 
 ## Problem and motivation
 
@@ -18,6 +18,8 @@ preserving a simple deployment contract: one WebSocket server and one declared
 model. The current competition configuration selects
 `google-cloud/claude-opus-5-5`. The implementation is Apache-2.0, derived in part
 from Google Research’s custom-openai sample with attribution retained in NOTICE.
+The required root `harness.py` is now present and exports the solver used by
+`serve.py`; both files belong alongside root `submission.yaml`.
 
 ## Plan, execute, independently verify, fix
 
@@ -115,17 +117,46 @@ the kit handles its private transient runtime credential transport.
 
 ## Evaluation to date
 
-The recorded offline run used real Docker, Harbor 0.20.0, the kit’s ServeAgent and
+The current offline run used real Docker, Harbor 0.20.0, the kit’s ServeAgent and
 protocol relay, a no-network Python task container and a local OpenAI-compatible
 mock. The original synthetic task computes balanced three-phase current for
 100 kW at 480 V line-line and PF 0.9, producing DOCX and JSON. All four phases
 completed; content checks confirmed 133.646 A. One trial earned reward 1.0 with
-zero exceptions. The recorded unit suite passed 43 tests in 1.99 seconds; Ruff
-reported all checks passed. These measure plumbing, not model intelligence.
+zero exceptions in a rounded 25-second console runtime. The unit suite passed
+**62 tests in 1.83 seconds**; Ruff reported **All checks passed!** These measure
+plumbing, not model intelligence.
 
-Official dev mean: **[pending]**. Per-discipline scores: **[pending]**. Real-model
-runtime, token usage and cost: **[pending]**. Hidden-test score: **[not available]**.
-No accuracy gain from independent review or engineering tools is claimed yet.
+We also ran the full official kit against free, self-hosted Qwen3-8B Q4_K_M on
+CPU, through llama.cpp with a 32768-token context. A disposable local-only entry
+used reasoning effort `none`; the competition declaration remained unchanged.
+
+| Kit stage | Result |
+| --- | --- |
+| submission.yaml | PASS |
+| files | WARN: disposable copy has no Git repository |
+| build | PASS: 121 MiB bundle, 27 s |
+| model | PASS: 12.4 s through egress proxy |
+| listen | PASS: 2 s |
+| smoke | PASS: 19 s; 3705 input / 70 output tokens |
+| MCP | PASS: 35 s; 5615 input / 135 output tokens |
+| cancel | PASS: done within 10 s of cancellation |
+| artifacts | WARN: genuine dev artifacts absent |
+
+In a local reasoning-effort ablation, `high` passed smoke in **287 seconds** but
+failed to write the MCP deliverable within its model-phase budget, despite
+successful tool discovery. With `none`, smoke took **19 seconds**, MCP **35
+seconds**, and cancellation passed. This is one run per setting, not a general
+accuracy claim. Small phase budgets skipped planning and independent review.
+
+For reference only, the organizers' submission-template baseline (Pi + Claude
+Opus 5.5) has mean dev reward **0.491** over **29 tasks** in its committed
+`artifacts/manifest.json`: sum 14.246023 / 29 = 0.4912421724137931. This is **not
+our score**, and we did not rerun that baseline. See `results/README.md` for
+manifest provenance and `results/local_qwen_check.json` for environment records.
+
+**Our own official dev score remains unmeasured because the HF dataset is
+gated.** Per-discipline and hidden-test scores are unavailable; model costs
+remain unmeasured. No accuracy gain from review or engineering tools is claimed.
 
 ## Limitations and future work
 

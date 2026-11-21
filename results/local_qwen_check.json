@@ -1,0 +1,89 @@
+{
+  "format": 1,
+  "kind": "local_model_integration_check",
+  "measured_date_utc": "2026-11-21",
+  "official_dev_set": false,
+  "source_base_commit": "c40b536ac70f49ffee7c5f46fd9d61536dfdbd78",
+  "source_state": "Uncommitted compliance and local-model changes at measurement time; documentation added afterward.",
+  "environment": {
+    "os": "Ubuntu Linux",
+    "inference_hardware": "CPU only",
+    "docker_version": "29.9.2",
+    "harbor_version": "0.20.0",
+    "uv_version": "0.13.9",
+    "model_api_local_copy": "openai-compatible/qwen3-8b",
+    "model_api_main": "google-cloud/claude-opus-5-5",
+    "model_repository": "Qwen/Qwen3-8B-GGUF",
+    "model_file": "Qwen3-8B-Q4_K_M.gguf",
+    "gguf_sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+    "gguf_hash_matches_huggingface_linked_etag": true,
+    "llama_cpp_image": "ghcr.io/ggml-org/llama.cpp@sha256:ae28f5c2046de51dfd00c9116a36fe44b5e8703ef730d0aea69082781eecb1f7",
+    "context_tokens": 32768,
+    "cpu_threads": 8,
+    "parallel_slots": 1,
+    "jinja": true,
+    "reasoning_effort": "none",
+    "server_restarted": false,
+    "successful_serve_image": "plebench-serve:00f74c2b5ae2474a"
+  },
+  "command": "scripts/run_local_model.sh check --output ~/ple-offline-runs/qwen-no-thinking",
+  "kit_check": {
+    "exit_code": 0,
+    "ready_to_submit": false,
+    "local_only_model": true,
+    "stages": [
+      {"name": "submission.yaml", "status": "pass"},
+      {"name": "files", "status": "warn", "reason": "Disposable copy is not a Git repository"},
+      {"name": "build", "status": "pass", "seconds": 27, "bundle_mib": 121},
+      {"name": "model", "status": "pass", "seconds": 12.4},
+      {"name": "listen", "status": "pass", "seconds": 2},
+      {"name": "smoke", "status": "pass", "seconds": 19, "requests": 11,
+       "input_tokens": 3705, "output_tokens": 70},
+      {"name": "mcp", "status": "pass", "seconds": 35, "requests": 15,
+       "input_tokens": 5615, "output_tokens": 135},
+      {"name": "cancel", "status": "pass", "done_within_grace_seconds": 10},
+      {"name": "artifacts", "status": "warn", "reason": "Genuine dev artifacts absent"}
+    ],
+    "timings_are_rounded_kit_report_values": true
+  },
+  "reasoning_ablation": {
+    "runs_per_setting": 1,
+    "high": {"smoke_status": "pass", "smoke_seconds": 287,
+             "mcp_status": "warn", "mcp_deliverable_written": false,
+             "mcp_observation": "Discovery succeeded; model streams reached phase deadlines without writing the deliverable",
+             "cancel_status": "pass"},
+    "none": {"smoke_status": "pass", "smoke_seconds": 19,
+             "mcp_status": "pass", "mcp_seconds": 35, "cancel_status": "pass"},
+    "accuracy_improvement_claimed": false
+  },
+  "other_session_measurements": {
+    "unit_tests": {"passed": 62, "seconds": 1.83},
+    "ruff": "All checks passed!",
+    "offline_e2e": {"model": "openai-compatible/fake", "trials": 1,
+                    "exceptions": 0, "reward": 1.0, "console_seconds": 25,
+                    "token_usage": null, "visual_rendering_checked": false}
+  },
+  "organizers_template_reference": {
+    "ours": false,
+    "rerun_by_us": false,
+    "harness": "Pi",
+    "model_api": "google-cloud/claude-opus-5-5",
+    "source": "submission-template/artifacts/manifest.json (committed)",
+    "manifest_created": "2026-10-20T03:33:56Z",
+    "manifest_sha256": "8c63633d2c3bba7c44dc9e923d88e988705bd912b51b5b5f386115997c1ae394",
+    "manifest_harness_commit": "6ab05b9f5f256b4ce148c20498b255712fdfbf26",
+    "aggregation": "Arithmetic mean of every tasks entry's reward, including zeros",
+    "tasks": 29,
+    "reward_sum": 14.246023,
+    "mean_dev_reward": 0.4912421724137931,
+    "rounded_mean_dev_reward": 0.491
+  },
+  "our_dev_set_score": null,
+  "our_dev_set_blocker": "Hugging Face dataset is gated; no dataset access token available",
+  "limitations": [
+    "Kit integration checks are not a dev-set or hidden-test evaluation.",
+    "The local copy is not a committed submission and has no genuine dev artifacts.",
+    "Planning and independent review were skipped when their budgets were below the configured threshold.",
+    "No model costs were measured; interrupted streams can lack provider usage metadata."
+  ]
+}
