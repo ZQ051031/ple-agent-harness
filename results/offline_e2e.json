@@ -1,0 +1,48 @@
+{
+  "kind": "synthetic_offline_integration",
+  "official_dev_set": false,
+  "implementation_commit": "2dcf1b3",
+  "run_directory": "/home/ubuntu/ple-offline-run-2",
+  "trial": "synthetic_task__69ETTqx",
+  "started_at": "2026-11-21T14:39:23.162360Z",
+  "finished_at": "2026-11-21T14:39:48.064536Z",
+  "harbor_version": "0.20.0",
+  "docker_version": "29.9.2",
+  "model": "openai-compatible/fake",
+  "trials": 1,
+  "exceptions": 0,
+  "reward": 1.0,
+  "serve_status": "completed",
+  "serve_requests": 22,
+  "harbor_console_runtime_seconds": 24,
+  "phase_seconds": {
+    "recon-plan": 0.18946692199983772,
+    "execute": 0.8164652430000388,
+    "verify-0": 0.42615889600006085,
+    "finalize": 0.007064224000032482
+  },
+  "phase_status": {
+    "recon-plan": "ok",
+    "execute": "ok",
+    "verify-0": "ok",
+    "finalize": "ok"
+  },
+  "review_verdict": "pass",
+  "deliverables": [
+    {"path": "/output/result.docx", "nonempty": true, "content_check": "pass"},
+    {"path": "/output/answer.json", "nonempty": true, "content_check": "pass"}
+  ],
+  "current_a_rounded": 133.646,
+  "token_usage": null,
+  "model_cost_usd": null,
+  "visual_rendering_checked": false,
+  "unit_test_snapshot": {"passed": 43, "seconds": 1.99},
+  "ruff_snapshot": "All checks passed!",
+  "dev_set_score": null,
+  "limitations": [
+    "Scripted fixture responses test transport and tools, not model reasoning.",
+    "Phase token counters were zero because the mock supplies no usage; this is not measured usage.",
+    "Kit check used --no-smoke; smoke and MCP tasks were not tested.",
+    "Initial image and dependency provisioning required network access."
+  ]
+}

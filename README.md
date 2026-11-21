@@ -1,167 +1,289 @@
-# Offline Docker end-to-end validation
+# PLE Agent Harness
 
-With Docker, uv, Harbor 0.20.0 (with websockets), and the real PLE checkout at
-`~/repos/ple` installed, run:
+A deadline-aware engineering agent for [Physical-Engineering’s Last Exam
+(PLE)](https://github.com/google-research/ple): 85 structural, civil, electrical
+and mechanical engineering tasks, including 29 public dev tasks and 56 hidden
+test tasks. PLE asks for project deliverables, graded by programmatic checks,
+expert-rubric model judging, or both—not just plausible chat answers.
+
+This Apache-2.0 entry derives its model loop and protocol bridge from Google
+Research’s reference implementation; see [NOTICE](NOTICE). The competition model
+is `google-cloud/claude-opus-5-5`. No official dev score has been measured yet.
+This is an independent entry, not an official Google product.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    Task[Original instruction + deadline] --> Plan[Recon + JSON requirements plan]
+    Plan --> Execute[Discipline-specialized execution]
+    Execute --> Verify[Fresh-context independent review]
+    Verify -->|major or critical issue; time remains| Fix[Fix in new executor context]
+    Fix --> Verify
+    Verify --> Final[Deterministic checks + final answer]
+    Budget[Deadline budgets + final reserve] -.-> Plan
+    Budget -.-> Execute
+    Budget -.-> Verify
+    Budget -.-> Final
+    Plan --> Tools[Tool dispatcher]
+    Execute --> Tools
+    Verify --> Tools
+    Fix --> Tools
+    Tools --> Host[Serve-side document libraries]
+    Tools --> Bridge[WebSocket evaluator bridge]
+    Bridge --> Container[Task bash / files / local MCP]
+    Host -->|read and upload bytes via bridge| Container
+    Eng[Uploaded stdlib engtools] --> Container
+    Model[Single model via egress proxy] -.-> Plan
+    Model -.-> Execute
+    Model -.-> Verify
+    Model -.-> Fix
+    Model -.-> Final
+```
+
+Each phase uses a reusable `AgentLoop` with its own prompt, tools, conversation
+and absolute monotonic deadline. Planning atomizes requirements. Execution writes
+deliverables early. Independent review reopens outputs and recomputes important
+numbers. At most two fix/review rounds run by default. Finalization checks planned
+files are nonempty, inspects office files, and summarizes paths and assumptions.
+Exceptions are handled best-effort with executor-summary fallbacks; plan and
+timing/token trace are saved under `/tmp/ple_work/`.
+
+The reference loop’s streaming, retry/backoff, Claude caching and thinking-block
+preservation, Responses fallback, token-limit fallback, truncated-output
+continuation, context compaction and deadline-aware finishing are retained.
+MCP connects once per task and is shared across sequential phases.
+
+### Tool layer and engtools
+
+* **Task-side:** bash, read/write/edit files, and available local MCP tools.
+  Task containers have no network and may lack document libraries.
+* **Serve-side:** `extract_text`, `write_docx`, `write_xlsx`, `inspect_office` use
+  python-docx, openpyxl and pypdf; bytes move through the evaluator protocol.
+  Reads enforce 10,000,000 bytes; uploads use 5,000,000-byte append chunks.
+  Extraction supports PDF, DOCX, XLSX/XLSM, PPTX and text formats; spreadsheet
+  extraction caps at 1000 rows/sheet, and expanded ZIP inputs at 100 MB.
+* **Stdlib engineering library:** uploaded to `/tmp/ple_work/engtools/`, with
+  units, structural, electrical, mechanical, civil, economics and Markdown
+  calculation-log modules. Use `PYTHONPATH=/tmp/ple_work python3 script.py`.
+  Python 3.8+ compatible, with formula sources, units and assumptions in docstrings.
+
+These are idealized helpers, not complete code-compliance checks. Conductor tables
+are caller-supplied. Spreadsheet formulas are preserved but **not evaluated**;
+cached values may be missing until a spreadsheet engine recalculates the file.
+Read-only phases omit write tools and prohibit mutating bash/MCP by prompt.
+Reviewer bash starts in `/tmp/ple_work`. **This is not an OS-level write sandbox.**
+
+### Configuration
+
+Frozen `Config` in `ple_harness/config.py` accepts these overrides. Shares apply
+to then-remaining work time after the final reserve, not the original total.
+The earliest task deadline/limit applies. Invalid environment settings are logged
+and fall back to defaults. In kit runs, put nonsecret overrides in
+`submission.yaml`'s `env`: arbitrary host `PLE_*` variables are not forwarded.
+
+| Variable | Default | Meaning |
+| --- | ---: | --- |
+| `PLE_DEFAULT_TOTAL_SECONDS` | 3600 | Fallback total without a task limit |
+| `PLE_RECON_SHARE` | 0.12 | Planning share; maximum 0.12 |
+| `PLE_EXECUTE_SHARE` | 0.55 | Initial execution share |
+| `PLE_VERIFY_SHARE` | 0.15 | Each review share; maximum 0.15 |
+| `PLE_FIX_SHARE` | 0.65 | Each fix round share |
+| `PLE_MIN_PHASE_SECONDS` | 120 | Skip undersized work phases; tiny-budget fallback applies |
+| `PLE_FINAL_RESERVE_SECONDS` | 90 | Fixed final reserve floor |
+| `PLE_FINAL_RESERVE_SHARE` | 0.03 | Reserve is max(floor, total × share), bounded by available time |
+| `PLE_FINALIZE_SECONDS` | 90 | Final-answer loop cap |
+| `PLE_FINAL_CHECK_SECONDS` | 30 | Deterministic-check cap |
+| `PLE_SETUP_SECONDS` | 60 | Setup cap |
+| `PLE_MAX_FIX_ROUNDS` | 2 | Maximum fix/review rounds |
+
+### Layout and reuse
+
+```text
+submission.yaml, serve.py, taskbridge.py  Entry and protocol server
+ple_harness/
+  llm.py, common.py                     Reusable model loop and message helpers
+  orchestrator.py, config.py            Phases and budgets
+  tools.py, host_tools.py               Registry and host document tools
+  mcp.py, install.py, engtools/          MCP and uploaded engineering package
+tests/                                 Offline unit tests and local HTTP tests
+examples/synthetic_task/                Original integration fixture
+scripts/                               Mock server and offline/dev runners
+results/                               Synthetic results, not official artifacts
+WRITEUP.md                             Competition writeup draft
+```
+
+`AgentLoop(session, system_prompt, initial_messages, tools, dispatch,
+deadline=None, role="agent", client=None)` returns `(final_text, history)` from
+`await loop.run()`. Caller owns client cleanup. Register custom tools with
+`ToolDispatcher.register(spec, async_handler)`; connect one `MCPCatalog` per task.
+
+## Setup & resources
+
+Use a local [Docker daemon](https://docs.docker.com/engine/install/), Git,
+[uv](https://docs.astral.sh/uv/) and Harbor. Keep this repo separate from PLE:
 
 ```bash
-cd ~/repos/ple
-uv run python -m kit validate ~/repos/ple-agent-harness
-uv run python -m kit build ~/repos/ple-agent-harness
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+uv tool install harbor==0.20.0 --with websockets
+# Only if PLE is not already checked out:
+git clone https://github.com/google-research/ple.git "$HOME/repos/ple"
+```
+
+Read upstream [kit](https://github.com/google-research/ple/blob/main/kit/README.md),
+[evaluation](https://github.com/google-research/ple/blob/main/eval/README.md),
+[model](https://github.com/google-research/ple/blob/main/docs/models.md) and
+[fair-play](https://github.com/google-research/ple/blob/main/docs/rules.md) docs.
+For real tasks, request gated access and accept the terms on the
+[Hugging Face dataset](https://huggingface.co/datasets/google/physical-engineerings-last-exam),
+then provide an account read token as `HF_TOKEN`. Never commit tokens, `.env`
+files, raw private logs or task datasets.
+
+**Hardware used:** Linux host with about 31 GiB RAM, 124 GB root filesystem
+(about 108 GB free at documentation time), Docker 29.9.2. This is not a measured
+full-dev-set requirement. Upstream asks for about 10 GB free for base images plus
+task/world images; world images are about 17 GB. Docker Desktop needs at least
+6 CPUs and 16.25 GB RAM for the largest task plus serve stack. Start with one
+trial; concurrency increases resources. Tasks can take six hours each, plus
+setup and grading, and real model calls incur charges.
+
+Competition entries use one sponsored `google-cloud/<id>` model. Local runs need
+a proxy backed by your own billed Google Cloud project. Own-provider keys and
+`openai-compatible/<model>` are supported locally but are not valid competition
+submissions. The synthetic mock requires neither paid access nor a dataset token.
+
+## How to run
+
+### Unit tests
+
+```bash
+cd ~/repos/ple-agent-harness
+uv run --with-requirements requirements.txt --with pytest pytest -q
+uv run ruff check .
+/usr/bin/python3 -I -S tests/test_engtools.py
+```
+
+### Offline end-to-end
+
+```bash
 cd ~/repos/ple-agent-harness
 scripts/run_offline_e2e.sh "$HOME/ple-offline-runs/example"
 ```
 
-The output directory must not already exist. Override `PLE_ROOT` for another kit
-checkout. Initial provisioning/builds need network access for images and packages;
-the episode uses no paid model, credentials, Hugging Face dataset or external
-model service. The task runs with Harbor's `no-network` policy and only Python
-stdlib. This is not an air-gapped cold-install test.
+Output directory must be new; override `PLE_ROOT` for another PLE checkout.
+Initial image/dependency provisioning needs network: this is not an air-gapped
+cold build. The episode runs real Docker, a no-network task, the kit protocol
+relay and Harbor verifier. A stdlib mock listens on `0.0.0.0:8090` (trusted dev
+hosts only). A local entry copy uses `openai-compatible/fake` and
+`--model-base-url http://localhost:8090/v1`; the kit rewrites localhost to
+`host.docker.internal` and grants that exact egress-proxy endpoint exception.
 
-`scripts/mock_model.py` is a stdlib OpenAI-compatible server, bound to `0.0.0.0:8090`
-for Docker reachability (use only on a trusted development host). It supports the
-kit's nonstreamed connectivity probe and streamed tool calls. Replies are scripted
-by phase prompt: JSON plan, bash calculation using uploaded engtools, write_file,
-host-side write_docx, independent read/recomputation, pass verdict and final answer.
-It tests transport/tooling, not model reasoning or reviewer quality.
+The runner uses `kit check --no-smoke`, then Harbor's kit `ServeAgent` directly:
+`eval/run.py --tasks-dir` still selects official dev IDs, not our synthetic task.
+Unrelated smoke/MCP checks are skipped. It asserts reward 1.0, no exception,
+collected DOCX/JSON, phase completion and final message. Logs remain in the output
+directory. This tests integration, **not reasoning or competition readiness**.
 
-The runner copies the entry outside the repository and changes only the copy to
-`openai-compatible/fake` with a public HTTPS placeholder URL. The competition YAML
-remains unchanged. It runs real `kit check --no-smoke --model-base-url
-http://localhost:8090/v1`, then the kit's `ServeAgent` directly in Harbor against
-the original local task in `examples/synthetic_task/`. `eval/run.py --tasks-dir`
-still restricts selection to IDs in the official dev manifest, so it cannot select
-this synthetic task. No fake evaluator or copied PLE task content is needed.
+### Real model, kit checks and dev evaluation
 
-The kit rewrites localhost to `host.docker.internal` and grants the exact model
-endpoint as an egress-proxy exception, including on Docker 28+. Harbor uses that
-same runtime configuration for its real serve stack and protocol relay. The kit
-check deliberately omits its unrelated smoke/MCP tasks; those are not validated
-by this deterministic electrical-task model. Local-only model and missing official
-dev artifacts notices are expected, not competition readiness claims.
+After obtaining your own project/model and gated dataset access:
 
-Logs, Harbor results, collected deliverables and phase trace remain in the output
-directory; the runner asserts reward 1.0, no trial exception, collected outputs,
-and the stdlib DOCX/JSON content checks. `tests/test_offline.py` separately covers
-mock responses, streaming/probe HTTP, and missing/incorrect synthetic outputs.
+```bash
+cd ~/repos/ple
+gcloud auth application-default login
+export VERTEXAI_PROJECT='<your-gcp-project>'
+export MODEL_PROXY_KEY="$(openssl rand -hex 24)"
+kit/model_proxy/start.sh &
+export MODEL_PROXY_URL=http://localhost:4000
+export HF_TOKEN='<your-HF-read-token>'
+# Load actual secrets securely; do not commit them or enable shell tracing.
 
-# PLE Agent Harness
+uv run python -m kit validate ~/repos/ple-agent-harness
+uv run python -m kit build ~/repos/ple-agent-harness
+uv run python -m kit check ~/repos/ple-agent-harness
 
-Apache-2.0 competition harness derived from Google Research's PLE custom-openai
-sample; see NOTICE for attribution. Run the WebSocket server with
-`python serve.py` in the evaluator's environment.
-
-## Development
-
-```sh
-uv run --with-requirements requirements.txt --with pytest pytest -q
-uv run ruff check .
+# Judge uses MODEL_PROXY_URL/KEY when no explicit judge endpoint is set:
+export JUDGE_MODEL=claude-opus-5-5
+mkdir -p "$HOME/ple-dev-runs"
+uv run python eval/run.py ~/repos/ple-agent-harness --trials 1 \
+  --out "$HOME/ple-dev-runs/first"
 ```
 
-## Reusing the core
+Use a new or empty `--out`. The proxy must be reachable from Docker (default bind:
+`0.0.0.0`, not loopback-only). Without an explicit judge endpoint, do not set
+`JUDGE_API_KEY`. For a separate judge set both `JUDGE_BASE_URL` and `JUDGE_API_KEY`,
+and a `JUDGE_MODEL` it serves. Precedence: explicit judge, model proxy, own-model
+fallback for local-only entries. If pointing only `JUDGE_BASE_URL` at the kit proxy
+without `MODEL_PROXY_URL`, use `JUDGE_MODEL=claude-opus-5-5-judge`. The evaluator’s
+Opus 5 refusal fallback is judge behavior, not a second harness model.
 
-`AgentLoop(session, system_prompt, initial_messages, tools, dispatch,
-deadline=None, role="agent", client=None)` accepts a user string or a list of
-Chat Completions messages. `await loop.run()` returns `(final_text, history)`.
-`deadline` is an absolute `time.monotonic()` timestamp; the earlier of it and
-the session deadline governs streaming, retry waits, compaction and wrapping up.
-An injected client must implement the OpenAI asynchronous streaming interface.
-The caller owns and closes the client, including a default-created client.
+Equivalent environment-only wrapper (same proxy/HF environment):
 
-`ToolDispatcher.register(spec, async_handler)` registers a function schema and
-its keyword-argument handler. Register `ContainerTools(session, time_left)`
-with `register_container`; the optional clock lets shell execution respect
-the loop's step deadline. Unknown tools and malformed arguments become text
-errors for the model.
-
-Create one `MCPCatalog(session, reserved_names)` per task, call `connect()`
-once (repeated calls are idempotent), then `register(dispatcher)`. Its returned
-prompt describes direct tools or catalog search. The catalog and its connections
-can be shared by multiple sequential loops without reconnecting.
-
-The solve function runs the multi-phase orchestrator described below. Document
-libraries are installed in the serve container only, not the task container.
-
-## Engineering tools
-
-The default solve registers serve-side `extract_text`, `write_docx`,
-`write_xlsx`, and `inspect_office`. Inputs are stat-checked against the
-10,000,000-byte protocol read limit; larger files require container-side
-processing. Writes use 5,000,000-byte append chunks. Extraction clips text,
-limits spreadsheets to 1000 rows/sheet, and rejects ZIPs whose declared
-expanded size exceeds 100 MB. PDF `pages` are 1-based page numbers.
-
-Spreadsheet formulas are written but not calculated by openpyxl. Extraction
-reports both formula text and cached values where available; a newly generated
-formula normally has no cached value until a spreadsheet engine recalculates it.
-Inspection reports existing spreadsheet error cells; it does not evaluate formulas.
-
-`install_engtools(session)` uploads all eight stdlib-only package files at
-task start. The model receives instructions to use
-`PYTHONPATH=/tmp/ple_work python3 script.py` and import `engtools`.
-Module/function docstrings document formula sources, units and assumptions.
-The helpers implement preliminary idealized calculations, not complete code
-compliance checks. ASCE ELF requires a code-limited period and mapped S1 to
-apply the high-seismic minimum. Conductor ampacity tables are caller-supplied.
-The transformer short-circuit function includes the necessary 1000 conversion
-from kVA to VA, so its output is amperes.
-
-To run engineering checks without any site packages:
-
-```sh
-/usr/bin/python3 -I -S tests/test_engtools.py
+```bash
+cd ~/repos/ple-agent-harness
+scripts/run_dev_eval.sh "$HOME/ple-dev-runs/wrapped"
+# Optional subset, exported by the official evaluator:
+DEV_TASKS=data-center-site-model,engineers-estimate-check \
+  scripts/run_dev_eval.sh "$HOME/ple-dev-runs/subset"
 ```
 
-## Multi-phase orchestration
+`DEV_TRIALS` defaults to 1; `PLE_ROOT` changes the kit checkout. The wrapper reads
+credentials only from inherited environment, never creates secret files or prints
+their values, and does not expose `--no-export`. The kit manages private transient
+runtime environment files itself. Review raw logs before publishing. Real dev
+evaluation has **not** been run here.
 
-`ple_harness.orchestrator.solve(session, config=None, client=None)` runs:
+`eval/run.py` exports to this entry's `./artifacts/` by default, also saving
+`results.json`, `export.json` and run artifacts under `--out`. A subset updates
+only its task folders. To import a saved run, validate, or regrade:
 
-1. Read-only recon/planning, saving parsed JSON (or a raw-plan wrapper) to
-   `/tmp/ple_work/plan.json`.
-2. Execution using the original instruction, plan and atomized checklist.
-3. Fresh-context independent verification, reopening deliverables and recomputing
-   consequential numbers.
-4. Up to two fix/review rounds for critical or major issues.
-5. Deterministic nonempty-file checks and office inspections, then a short
-   read-only loop producing the final answer.
+```bash
+cd ~/repos/ple
+uv run python -m kit artifacts ~/repos/ple-agent-harness --from "$HOME/ple-dev-runs/first"
+uv run python -m kit artifacts ~/repos/ple-agent-harness
+uv run python eval/run.py --artifacts ~/repos/ple-agent-harness
+# Recover failed judge grading without rerunning the harness:
+uv run python eval/run.py --regrade "$HOME/ple-dev-runs/first"
+```
 
-MCP connections and the installed engineering package are reused across phases,
-but model conversations are not. Executor summaries are retained as fallbacks;
-planner/reviewer JSON never replaces the task's final message. Exceptions and
-timeouts are logged to stderr, and phase timing/token outcomes and final checks
-are saved best-effort in `/tmp/ple_work/trace.json`. Missing or malformed reviews
-are not treated as passes.
+Never hand-edit exported artifacts/manifests. Limits include 95 MiB per deliverable,
+256 MiB/2000 files per task, and 512 MiB/10000 files total.
 
-Read-only phases omit the built-in write/edit/document-creation tools and instruct
-the model not to modify inputs or deliverables, including through MCP. Reviewer
-bash calls start in `/tmp/ple_work` and are restricted by prompt to inspection
-and independent recomputation there. **This is a model/tool policy, not an OS
-filesystem sandbox:** arbitrary bash and task-specific MCP tools can still write.
+## Results
 
-### Configuration
+| Recorded check | Result |
+| --- | --- |
+| Synthetic Docker/Harbor episode | 1 trial, 0 exceptions, reward 1.0 |
+| Synthetic current | 133.646 A; DOCX and JSON content checks passed |
+| Unit suite | 43 passed in 1.99 s |
+| Ruff | All checks passed |
 
-The frozen `Config` dataclass accepts these environment overrides. Fractions are
-decimal shares of the **then-remaining work time after subtracting the final
-reserve**, not shares of the original task budget:
+**Dev-set results: pending — requires HF token + model access**
 
-| Environment variable | Default | Meaning |
-| --- | --- | --- |
-| `PLE_DEFAULT_TOTAL_SECONDS` | 3600 | Total if no task deadline or positive limit is supplied |
-| `PLE_RECON_SHARE` | 0.12 | Recon share; cannot exceed 0.12 |
-| `PLE_EXECUTE_SHARE` | 0.55 | Initial execution share |
-| `PLE_VERIFY_SHARE` | 0.15 | Each independent review share; cannot exceed 0.15 |
-| `PLE_FIX_SHARE` | 0.65 | Each fix round's share |
-| `PLE_MIN_PHASE_SECONDS` | 120 | Skip ordinary phases with smaller budgets |
-| `PLE_FINAL_RESERVE_SECONDS` | 90 | Minimum reserved finalization time |
-| `PLE_FINAL_RESERVE_SHARE` | 0.03 | Reserved fraction of initial total; use the larger reserve |
-| `PLE_FINALIZE_SECONDS` | 90 | Maximum final-answer loop duration |
-| `PLE_FINAL_CHECK_SECONDS` | 30 | Maximum deterministic-check time, also capped at 40% of time left |
-| `PLE_SETUP_SECONDS` | 60 | Per-operation engtools/MCP setup timeout |
-| `PLE_MAX_FIX_ROUNDS` | 2 | Maximum fix loops, each followed by a review if budget permits |
+See [recorded results](results/README.md) and [writeup draft](WRITEUP.md). The mock
+has fixture-specific scripts; production `solve()` does not call it. There are no
+measured official dev/test scores or model costs. DOCX content and structure were
+checked, but visual rendering remains unverified.
 
-The total deadline is the earliest of the session deadline, current time plus
-session time left, and current time plus the declared task limit. With none,
-the configurable one-hour default is used. Each AgentLoop also gets its own
-absolute monotonic step deadline, and an outer timeout bounds the entire phase,
-including tools. Very short tasks skip ordinary phases and use their available
-time for a final answer. Finalization is exempt from the 120-second threshold.
-Invalid environment configuration is logged and defaults are used.
+## How to submit
+
+1. Review current rules and competition announcements. Run the real dev set using
+   the exact harness and declared sponsored model intended for submission.
+2. Review changes for secrets/task content. Commit harness and official exported
+   `artifacts/` together, staging explicit reviewed paths, including deletions.
+   Manifest digests bind artifacts to harness files; rerun after relevant changes.
+3. After committing, from `~/repos/ple` run `uv run python -m kit check
+   ~/repos/ple-agent-harness`. Require **`ready to submit`**, not just exit code 0
+   or a partial/no-smoke pass.
+4. Push the reviewed commit to your GitHub repo when ready. An entry is a single
+   commit containing harness, YAML and dev artifacts. Follow
+   [ple-bench.com](https://ple-bench.com) for submission mechanics/dates; upstream
+   says these will be announced. This repository has not been submitted.
+
+## Limitations and license
+
+Same-model review can repeat execution errors. Budgets/formulas need real-task
+calibration. No web search or external APIs are part of the harness; runtime
+egress is restricted to the model. Engineering outputs require qualified review.
+Code is [Apache-2.0](LICENSE), with attribution preserved in [NOTICE](NOTICE).
