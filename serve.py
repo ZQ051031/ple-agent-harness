@@ -14,7 +14,7 @@
 
 """Server entry point."""
 import taskbridge
-from ple_harness import solve
+from harness import solve
 
 if __name__ == "__main__":
     taskbridge.run(solve)

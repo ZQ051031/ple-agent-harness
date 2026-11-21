@@ -733,6 +733,8 @@ class AgentLoop:
       ):
         raise
       raise StreamBadRequest(said["message"]) from exc
+    finally:
+      await self.report(reply)
     for n, call in reply.calls.items():
       call["id"] = call["id"] or f"call_{n}_{len(self.messages)}"
       # some open models leak chat-template tokens into it
@@ -827,9 +829,10 @@ class AgentLoop:
     Args:
       reply: Completed `Reply` whose `usage` should be reported.
     """
-    usage = reply.usage
-    if usage is None:
+    if getattr(reply, "reported", False):
       return
+    reply.reported = True
+    usage = reply.usage
     cached = (
         getattr(
             getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0
@@ -837,7 +840,8 @@ class AgentLoop:
         or 0
     )
     await self.session.usage(
-        MODEL, usage.prompt_tokens or 0, usage.completion_tokens or 0, cached
+        MODEL, getattr(usage, "prompt_tokens", 0) or 0,
+        getattr(usage, "completion_tokens", 0) or 0, cached
     )
 
   def unread(self) -> list[dict[str, Any]]:

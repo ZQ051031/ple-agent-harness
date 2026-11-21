@@ -8,7 +8,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from ple_harness import common
-from ple_harness.llm import AgentLoop
+from ple_harness.llm import AgentLoop, Reply
 from ple_harness.mcp import MCPCatalog
 from ple_harness.tools import ContainerTools, ToolDispatcher
 
@@ -65,6 +65,42 @@ class FakeClient:
 
 def text_delta(text):
     return NS(content=text, tool_calls=None)
+
+
+@pytest.mark.parametrize("mode", ["normal", "empty", "error"])
+def test_model_call_usage(tmp_path, mode):
+    async def scenario():
+        session = FakeSession(tmp_path)
+        dispatcher = ToolDispatcher(session)
+        usage = NS(prompt_tokens=12, completion_tokens=3,
+                   prompt_tokens_details=NS(cached_tokens=5))
+
+        async def create(**kwargs):
+            async def chunks():
+                if mode != "empty":
+                    yield NS(usage=usage, choices=[])
+                if mode == "error":
+                    raise RuntimeError("broken stream")
+                yield NS(usage=None, choices=[NS(delta=text_delta("ok"),
+                                                finish_reason="stop")])
+            return chunks()
+
+        client = NS(chat=NS(completions=NS(create=create)))
+        loop = AgentLoop(session, "system", "task", dispatcher.specs, dispatcher,
+                         deadline=time.monotonic() + 60, client=client)
+        if mode == "error":
+            with pytest.raises(RuntimeError, match="broken stream"):
+                await loop.stream(loop.messages, "none", 0)
+        else:
+            reply = await loop.stream(loop.messages, "none", 0)
+            await loop.record(reply)
+        assert session.usages == [(common.MODEL, 0, 0, 0) if mode == "empty"
+                                  else (common.MODEL, 12, 3, 5)]
+        empty = Reply()
+        await loop.report(empty)
+        await loop.report(empty)
+        assert len(session.usages) == 2
+    asyncio.run(scenario())
 
 
 def test_loop_with_streamed_tool(tmp_path):
