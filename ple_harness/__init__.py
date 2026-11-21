@@ -17,12 +17,14 @@ import time
 from .common import SYSTEM
 from .llm import AgentLoop
 from .mcp import MCPCatalog
-from .tools import ContainerTools, ToolDispatcher
+from .tools import ContainerTools, ToolDispatcher, install_engtools
 
 async def solve(session):
     dispatcher = ToolDispatcher(session)
     container = ContainerTools(session)
     dispatcher.register_container(container)
+    dispatcher.register_host()
+    usage = await install_engtools(session)
     catalog = MCPCatalog(session, dispatcher.handlers)
     mcp = await catalog.connect()
     catalog.register(dispatcher)
@@ -33,6 +35,7 @@ async def solve(session):
         session.instruction, dispatcher.specs, dispatcher,
         deadline=None if left is None else time.monotonic() + left,
     )
+    loop.system_prompt += "\n\nHost-side document tools are available even if the task lacks libraries. " + usage
     container.time_left = loop.time_left
     container.finish_margin = min(180, max(left, 0) / 4) if left is not None else 180
     try:

@@ -34,3 +34,33 @@ can be shared by multiple sequential loops without reconnecting.
 
 The initial solve function intentionally runs just one loop. Document libraries
 are installed in the serve container only, not the task container.
+
+## Engineering tools
+
+The default solve registers serve-side `extract_text`, `write_docx`,
+`write_xlsx`, and `inspect_office`. Inputs are stat-checked against the
+10,000,000-byte protocol read limit; larger files require container-side
+processing. Writes use 5,000,000-byte append chunks. Extraction clips text,
+limits spreadsheets to 1000 rows/sheet, and rejects ZIPs whose declared
+expanded size exceeds 100 MB. PDF `pages` are 1-based page numbers.
+
+Spreadsheet formulas are written but not calculated by openpyxl. Extraction
+reports both formula text and cached values where available; a newly generated
+formula normally has no cached value until a spreadsheet engine recalculates it.
+Inspection reports existing spreadsheet error cells; it does not evaluate formulas.
+
+`install_engtools(session)` uploads all eight stdlib-only package files at
+task start. The model receives instructions to use
+`PYTHONPATH=/tmp/ple_work python3 script.py` and import `engtools`.
+Module/function docstrings document formula sources, units and assumptions.
+The helpers implement preliminary idealized calculations, not complete code
+compliance checks. ASCE ELF requires a code-limited period and mapped S1 to
+apply the high-seismic minimum. Conductor ampacity tables are caller-supplied.
+The transformer short-circuit function includes the necessary 1000 conversion
+from kVA to VA, so its output is amperes.
+
+To run engineering checks without any site packages:
+
+```sh
+/usr/bin/python3 -I -S tests/test_engtools.py
+```

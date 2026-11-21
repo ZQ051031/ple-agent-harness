@@ -15,8 +15,30 @@
 """Extensible container tool dispatcher."""
 import json
 import posixpath
+import zipfile
 import taskbridge
-from .common import TOOLS, clip
+from pypdf.errors import PdfReadError
+from .common import TOOLS, clip, tool
+from .host_tools import HostTools
+from .install import install_engtools as install_engtools
+
+HOST_TOOLS = [
+    tool("extract_text", "Extract PDF/DOCX/XLSX/XLSM/PPTX/text in the serve container. "
+         "10 MB input limit; PDF pages are 1-based; spreadsheets cap at 1000 rows per sheet.",
+         ["path"], path={"type": "string"},
+         pages={"type": "array", "items": {"type": "integer"}},
+         max_chars={"type": "integer", "minimum": 1, "maximum": 200000}),
+    tool("write_docx", "Render Markdown headings, lists, tables, emphasis and code to a real DOCX.",
+         ["path", "markdown"], path={"type": "string"}, markdown={"type": "string"}),
+    tool("write_xlsx", "Write an XLSX, bold first rows, preserve =formulas (not evaluated).",
+         ["path", "sheets"], path={"type": "string"}, sheets={
+             "type": "array", "items": {"type": "object", "required": ["name", "rows"],
+                 "properties": {"name": {"type": "string"}, "rows": {"type": "array",
+                     "items": {"type": "array", "items": {"type": ["number", "string", "null"]}}},
+                     "column_widths": {"type": "array", "items": {"type": "number"}}}}}),
+    tool("inspect_office", "Inspect DOCX counts, XLSX dimensions/formulas/errors, ZIP members or PDF pages.",
+         ["path"], path={"type": "string"}),
+]
 
 class ContainerTools:
   def __init__(self, session, time_left=None):
@@ -146,10 +168,16 @@ class ToolDispatcher:
     for spec in TOOLS:
       self.register(spec, getattr(container, spec["function"]["name"]))
 
+  def register_host(self, host=None):
+    host = host or HostTools(self.session)
+    for spec in HOST_TOOLS:
+      self.register(spec, getattr(host, spec["function"]["name"]))
+
   async def __call__(self, name, args):
     await self.session.log(f"{name} {json.dumps(args)[:400]}")
     try:
       handler = self.handlers.get(name)
       return clip(await handler(**args)) if handler else f"error: there is no tool named {name}"
-    except (taskbridge.TaskError, AttributeError, KeyError, TypeError, ValueError, RuntimeError) as exc:
+    except (taskbridge.TaskError, AttributeError, KeyError, TypeError, ValueError,
+            RuntimeError, OSError, zipfile.BadZipFile, PdfReadError) as exc:
       return f"error: {type(exc).__name__}: {exc}"
